@@ -161,7 +161,9 @@ SFR(ROM_DATA_L,	0x8E);	// data low byte for flash-ROM writing
 SFR(ROM_DATA_H,	0x8F);	// data high byte for flash-ROM writing
 SFR(ROM_CTRL,	0x86);	// WriteOnly: flash-ROM control
 #define ROM_CMD_PROG      0x9A      // WriteOnly: flash-ROM word program operation command, for changing some ROM bit of a word from 1 to 0
+#define ROM_CMD_WRITE     0x9A      // WriteOnly: flash-ROM word or Data-Flash byte write operation command
 #define ROM_CMD_ERASE     0xA6      // WriteOnly: flash-ROM sector erase operation command, for changing all ROM bit of 1KBytes from 0 to 1
+#define ROM_CMD_READ      0x8E      // WriteOnly: Data-Flash byte read operation command
 //sfr ROM_STATUS      = 0x86;         // ReadOnly: flash-ROM status
 #define ROM_STATUS        ROM_CTRL
 #define bROM_ADDR_OK      0x40      // ReadOnly: flash-ROM operation address valid flag, can be reviewed before or after operation: 0=invalid parameter, 1=address valid

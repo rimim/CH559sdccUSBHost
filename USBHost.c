@@ -2,6 +2,7 @@
 #include "USBHost.h"
 #include "util.h"
 #include "uart.h"
+#include "btmac.h"
 #include <string.h>
 
 SBIT(LED, 0x90, 6);
@@ -17,6 +18,9 @@ __code unsigned char SetupSetUsbConfig[] = { USB_REQ_TYP_OUT, USB_SET_CONFIGURAT
 
 __code unsigned char  SetHIDIdleRequest[] = {USB_REQ_TYP_CLASS | USB_REQ_RECIP_INTERF, HID_SET_IDLE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 __code unsigned char  GetHIDReport[] = {USB_REQ_TYP_IN | USB_REQ_RECIP_INTERF, USB_GET_DESCRIPTOR, 0x00, USB_DESCR_TYP_REPORT, 0 /*interface*/, 0x00, 0xff, 0x00};
+__code unsigned char  SetHIDSetReport[] = {USB_REQ_TYP_CLASS | USB_REQ_RECIP_INTERF, HID_SET_REPORT, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00};
+__code unsigned char  PS3SetHIDReport[] = {USB_REQ_TYP_OUT | USB_REQ_TYP_CLASS | USB_REQ_RECIP_INTERF, HID_SET_REPORT, 0xF4, 0x03, 0 /*interface*/, 0x00, 0x00};
+__code unsigned char  PS3PairSixaxis[] = {USB_REQ_TYP_OUT | USB_REQ_TYP_CLASS | USB_REQ_RECIP_INTERF, HID_SET_REPORT, 0xF5, 0x03, 0 /*interface*/, 0x00, 0x08, 0x00};
 
 __at(0x0000) unsigned char __xdata RxBuffer[MAX_PACKET_SIZE];
 __at(0x0100) unsigned char __xdata TxBuffer[MAX_PACKET_SIZE];
@@ -39,9 +43,9 @@ void disableRootHubPort(unsigned char index)
 	rootHubDevice[index].status = ROOT_DEVICE_DISCONNECT;
 	rootHubDevice[index].address = 0;
 	if (index)
-	UHUB1_CTRL = 0;
+		UHUB1_CTRL = 0;
 	else
-	UHUB0_CTRL = 0;
+		UHUB0_CTRL = 0;
 }
 
 void initUSB_Host()
@@ -303,7 +307,7 @@ unsigned char hostCtrlTransfer(unsigned char __xdata *DataBuf, unsigned short *R
 			{
 				delayUs(200);
 				UH_TX_LEN = RemLen >= endpoint0Size ? endpoint0Size : RemLen;
-				//memcpy(TxBuffer, pBuf, UH_TX_LEN);
+				memcpy(TxBuffer, pBuf, UH_TX_LEN);
 				pBuf += UH_TX_LEN;
 				if (pBuf[1] == 0x09)
 				{
@@ -403,6 +407,7 @@ char convertStringDescriptor(unsigned char __xdata *usbBuffer, unsigned char __x
 			strBuffer[i] = usbBuffer[2 + (i << 1)];
 	strBuffer[i] = 0;
 	sendProtocolMSG(MSG_TYPE_DEVICE_STRING,(unsigned short)len, index+1, 0x34, 0x56, strBuffer);
+	sendBluetoothMac();
 	return 1;
 }
 
@@ -422,7 +427,7 @@ unsigned char getConfigurationDescriptor()
     unsigned short len, total;
 	fillTxBuffer(GetConfigurationDescriptorRequest, sizeof(GetConfigurationDescriptorRequest));
 
-    s = hostCtrlTransfer(receiveDataBuffer, &len, RECEIVE_BUFFER_LEN);             
+    s = hostCtrlTransfer(receiveDataBuffer, &len, RECEIVE_BUFFER_LEN);
     if(s != ERR_SUCCESS)
         return s;
 	//todo didnt send reqest completely
@@ -434,12 +439,12 @@ unsigned char getConfigurationDescriptor()
 	fillTxBuffer(GetConfigurationDescriptorRequest, sizeof(GetConfigurationDescriptorRequest));
     ((PUSB_SETUP_REQ)TxBuffer)->wLengthL = (unsigned char)(total & 255);
     ((PUSB_SETUP_REQ)TxBuffer)->wLengthH = (unsigned char)(total >> 8);
-    s = hostCtrlTransfer(receiveDataBuffer, &len, RECEIVE_BUFFER_LEN);             
+    s = hostCtrlTransfer(receiveDataBuffer, &len, RECEIVE_BUFFER_LEN);
     if(s != ERR_SUCCESS)
         return s;
 	//todo 16bit and fix received length check
 	//if (len < total || len < ((PXUSB_CFG_DESCR)receiveDataBuffer)->wTotalLengthL)
-    //    return( ERR_USB_BUF_OVER );                             
+    //    return( ERR_USB_BUF_OVER );
     return ERR_SUCCESS;
 }
 
@@ -502,11 +507,11 @@ unsigned char getInterfaceDescriptor(unsigned char index)
 #define MAX_HID_DEVICES 8
 struct 
 {
-	unsigned char connected;
-	unsigned char rootHub;
-	unsigned char interface;
-	unsigned char endPoint;
-	unsigned long type;
+    unsigned char connected;
+    unsigned char rootHub;
+    unsigned char interface;
+    unsigned char endPoint;
+    unsigned long type;
 }  __xdata HIDdevice[MAX_HID_DEVICES];
 
 struct 
@@ -519,44 +524,79 @@ struct
 
 void resetHubDevices(unsigned char hubindex)
 {
-	 __xdata unsigned char hiddevice;
+    __xdata unsigned char hiddevice;
     VendorProductID[hubindex].idVendorL = 0;
     VendorProductID[hubindex].idVendorH = 0;
     VendorProductID[hubindex].idProductL = 0;
     VendorProductID[hubindex].idProductH = 0;
-	for (hiddevice = 0; hiddevice < MAX_HID_DEVICES; hiddevice++)
-	{
-	if(HIDdevice[hiddevice].rootHub == hubindex){
-	HIDdevice[hiddevice].connected  = 0;
-	HIDdevice[hiddevice].rootHub  = 0;
-	HIDdevice[hiddevice].interface  = 0;
-	HIDdevice[hiddevice].endPoint  = 0;
-	HIDdevice[hiddevice].type  = 0;
-	}
-	}
+    for (hiddevice = 0; hiddevice < MAX_HID_DEVICES; hiddevice++)
+    {
+        if(HIDdevice[hiddevice].rootHub == hubindex)
+        {
+            HIDdevice[hiddevice].connected  = 0;
+            HIDdevice[hiddevice].rootHub  = 0;
+            HIDdevice[hiddevice].interface  = 0;
+            HIDdevice[hiddevice].endPoint  = 0;
+            HIDdevice[hiddevice].type  = 0;
+        }
+    }
+}
+
+void checkDeviceStatus()
+{
+    __xdata unsigned char hiddevice;
+    for (hiddevice = 0; hiddevice < MAX_HID_DEVICES; hiddevice++)
+    {
+        if(HIDdevice[hiddevice].connected && HIDdevice[hiddevice].type == Usage_KEYBOARD)
+        {
+            putchar('K');
+        }
+        else if(HIDdevice[hiddevice].connected)
+        {
+            putchar('?');
+        }
+        else
+        {
+            putchar('E');
+        }
+    }
+}
+
+void setHIDkbLeds(unsigned char leds)
+{
+    __xdata unsigned char hiddevice;
+    for (hiddevice = 0; hiddevice < MAX_HID_DEVICES; hiddevice++)
+    {
+        if(HIDdevice[hiddevice].connected && HIDdevice[hiddevice].type == Usage_KEYBOARD)
+        {
+            selectHubPort(HIDdevice[hiddevice].rootHub, 0);
+            setHIDDeviceReport(hiddevice, leds);
+        }
+    }
 }
 
 void pollHIDdevice()
 {
-	 __xdata unsigned char s, hiddevice, len;
-	for (hiddevice = 0; hiddevice < MAX_HID_DEVICES; hiddevice++)
-	{
-		if(HIDdevice[hiddevice].connected){
-		selectHubPort(HIDdevice[hiddevice].rootHub, 0);
-		s = hostTransfer( USB_PID_IN << 4 | HIDdevice[hiddevice].endPoint & 0x7F, HIDdevice[hiddevice].endPoint & 0x80 ? bUH_R_TOG | bUH_T_TOG : 0, 0 );
-		if ( s == ERR_SUCCESS )
-   		{
-    		HIDdevice[hiddevice].endPoint ^= 0x80;
-			len = USB_RX_LEN;
-			if ( len )
-			{		
-				LED = !LED;	
-				//DEBUG_OUT("HID %lu, %i data %i : ", HIDdevice[hiddevice].type, hiddevice, HIDdevice[hiddevice].endPoint & 0x7F);
-				sendHidPollMSG(MSG_TYPE_DEVICE_POLL,len, HIDdevice[hiddevice].type, hiddevice, HIDdevice[hiddevice].endPoint & 0x7F, RxBuffer,VendorProductID[HIDdevice[hiddevice].rootHub].idVendorL,VendorProductID[HIDdevice[hiddevice].rootHub].idVendorH,VendorProductID[HIDdevice[hiddevice].rootHub].idProductL,VendorProductID[HIDdevice[hiddevice].rootHub].idProductH);
-			}
-		}
-		}
-	}
+    __xdata unsigned char s, hiddevice, len;
+    for (hiddevice = 0; hiddevice < MAX_HID_DEVICES; hiddevice++)
+    {
+        if(HIDdevice[hiddevice].connected)
+        {
+            selectHubPort(HIDdevice[hiddevice].rootHub, 0);
+            s = hostTransfer( USB_PID_IN << 4 | HIDdevice[hiddevice].endPoint & 0x7F, HIDdevice[hiddevice].endPoint & 0x80 ? bUH_R_TOG | bUH_T_TOG : 0, 0 );
+            if ( s == ERR_SUCCESS )
+            {
+               HIDdevice[hiddevice].endPoint ^= 0x80;
+               len = USB_RX_LEN;
+               if ( len )
+               {		
+                   LED = !LED;	
+                  //DEBUG_OUT("HID %lu, %i data %i : ", HIDdevice[hiddevice].type, hiddevice, HIDdevice[hiddevice].endPoint & 0x7F);
+                  sendHidPollMSG(MSG_TYPE_DEVICE_POLL,len, HIDdevice[hiddevice].type, hiddevice, HIDdevice[hiddevice].endPoint & 0x7F, RxBuffer,VendorProductID[HIDdevice[hiddevice].rootHub].idVendorL,VendorProductID[HIDdevice[hiddevice].rootHub].idVendorH,VendorProductID[HIDdevice[hiddevice].rootHub].idProductL,VendorProductID[HIDdevice[hiddevice].rootHub].idProductH);
+               }
+            }
+        }
+     }
 }
 
 
@@ -715,6 +755,19 @@ void parseHIDDeviceReport(unsigned char __xdata *report, unsigned short length, 
 	}
 }
 
+unsigned char setHIDDeviceReport(unsigned char CurrentDevive, unsigned char leds)
+{
+ 	unsigned char s;
+	unsigned short len, i, reportLen = RECEIVE_BUFFER_LEN;
+	DEBUG_OUT("Sending report to interface %i\n", HIDdevice[CurrentDevive].interface);
+
+	fillTxBuffer(SetHIDSetReport, sizeof(SetHIDSetReport));
+	((PXUSB_SETUP_REQ)TxBuffer)->wIndexL = HIDdevice[CurrentDevive].interface;
+	((PXUSB_SETUP_REQ)TxBuffer)->wLengthL = 1;
+	receiveDataBuffer[0] = leds;
+	return(hostCtrlTransfer(receiveDataBuffer, &len, 0));
+}
+
 unsigned char getHIDDeviceReport(unsigned char CurrentDevive)
 {
  	unsigned char s;
@@ -744,6 +797,74 @@ unsigned char getHIDDeviceReport(unsigned char CurrentDevive)
 	DEBUG_OUT("\n");
 	sendProtocolMSG(MSG_TYPE_HID_INFO, len, CurrentDevive, HIDdevice[CurrentDevive].interface, HIDdevice[CurrentDevive].rootHub, receiveDataBuffer);
 	parseHIDDeviceReport(receiveDataBuffer, len, CurrentDevive);
+	return (ERR_SUCCESS);
+}
+
+// typedef struct _USB_SETUP_REQ {
+//     uint8_t bRequestType;
+//     uint8_t bRequest;
+//     uint8_t wValueL;
+//     uint8_t wValueH;
+//     uint8_t wIndexL;
+//     uint8_t wIndexH;
+//     uint8_t wLengthL;
+//     uint8_t wLengthH;
+// } USB_SETUP_REQ, *PUSB_SETUP_REQ;
+// __code unsigned char  PairSixaxis[] = {USB_REQ_TYP_OUT | USB_REQ_TYP_CLASS | USB_REQ_RECIP_INTERF, HID_SET_REPORT, 0xF5, 0x03, 0 /*interface*/, 0x00, 0x08, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+
+unsigned char pairDevice(unsigned char CurrentDevive)
+{
+ 	unsigned char s;
+	unsigned short len, i, reportLen = RECEIVE_BUFFER_LEN;
+	DEBUG_OUT("Requesting report from interface %i\n", HIDdevice[CurrentDevive].interface);
+
+	fillTxBuffer(PS3PairSixaxis, sizeof(PS3PairSixaxis));
+	((PXUSB_SETUP_REQ)TxBuffer)->wIndexL = HIDdevice[CurrentDevive].interface;	
+
+    receiveDataBuffer[2] = BT_MAC[0];
+    receiveDataBuffer[3] = BT_MAC[1];
+    receiveDataBuffer[4] = BT_MAC[2];
+    receiveDataBuffer[5] = BT_MAC[3];
+    receiveDataBuffer[6] = BT_MAC[4];
+    receiveDataBuffer[7] = BT_MAC[5];
+
+	// receiveDataBuffer[2] = *(__code uint8_t*)(DATA_FLASH_ADDR+0);
+	// receiveDataBuffer[3] = *(__code uint8_t*)(DATA_FLASH_ADDR+1);
+	// receiveDataBuffer[4] = *(__code uint8_t*)(DATA_FLASH_ADDR+2);
+
+	// receiveDataBuffer[5] = *(__code uint8_t*)(DATA_FLASH_ADDR+3);
+	// receiveDataBuffer[6] = *(__code uint8_t*)(DATA_FLASH_ADDR+4);
+	// receiveDataBuffer[7] = *(__code uint8_t*)(DATA_FLASH_ADDR+5);
+
+	s = hostCtrlTransfer(receiveDataBuffer, &len, 0);
+	
+	return (ERR_SUCCESS);
+}
+
+// typedef struct _USB_SETUP_REQ {
+//     uint8_t bRequestType;
+//     uint8_t bRequest;
+//     uint8_t wValueL;
+//     uint8_t wValueH;
+//     uint8_t wIndexL;
+//     uint8_t wIndexH;
+//     uint8_t wLengthL;
+//     uint8_t wLengthH;
+// } USB_SETUP_REQ, *PUSB_SETUP_REQ;
+
+// __code unsigned char  SetHIDReport[] = {USB_REQ_TYP_OUT | USB_REQ_TYP_CLASS | USB_REQ_RECIP_INTERF, HID_SET_REPORT, 0xF4, 0x03, 0 /*interface*/, 0x00, 0x00};
+
+
+unsigned char setPS3HIDDeviceReport(unsigned char CurrentDevive)
+{
+ 	unsigned char s;
+	unsigned short len, i, reportLen = RECEIVE_BUFFER_LEN;
+	DEBUG_OUT("Requesting report from interface %i\n", HIDdevice[CurrentDevive].interface);
+
+	fillTxBuffer(PS3SetHIDReport, sizeof(PS3SetHIDReport));
+	((PXUSB_SETUP_REQ)TxBuffer)->wIndexL = HIDdevice[CurrentDevive].interface;	
+	s = hostCtrlTransfer(receiveDataBuffer, &len, 0);
+	
 	return (ERR_SUCCESS);
 }
 
@@ -875,6 +996,8 @@ unsigned char initializeRootHubConnection(unsigned char rootHubIndex)
 											HIDdevice[hiddevice].rootHub = rootHubIndex;
 											DEBUG_OUT("Got endpoint for the HIDdevice 0x%02x\n", HIDdevice[hiddevice].endPoint);
 											getHIDDeviceReport(hiddevice);
+											// setHIDDeviceReport(hiddevice);
+											pairDevice(hiddevice);
 										}
 									}
 									break;
